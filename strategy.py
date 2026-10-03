@@ -9,18 +9,16 @@ class MovingAverageCrossStrategy:
               (comes from data_handler.get_bars_up_to_now())
         Returns "BUY", "SELL", or "HOLD".
         """
-        # Q2: not enough data yet?
+     
         if len(bars) < self.long_window + 1:
             return "HOLD"
 
         closes = bars["close"]
 
-        # Today's two moving averages
 
         short_ma_today = closes.tail(self.short_window).mean()
         long_ma_today = closes.tail(self.long_window).mean()
 
-        # Q3: yesterday's two moving averages
 
         closes_yesterday = closes.iloc[:-1]   # everything except the last row
         short_ma_yesterday = closes_yesterday.tail(self.short_window).mean()

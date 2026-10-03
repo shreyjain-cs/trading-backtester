@@ -2,21 +2,33 @@ from data_handler import DataHandler
 from portfolio import Portfolio
 from execution_handler import ExecutionHandler
 from strategy import MovingAverageCrossStrategy
+from metrics import sharpe_ratio, max_drawdown
+from equity_curve import plot_equity_curves
+
+def static_allocation(data_handler, initial_cash=100_000, allocation=1.0):
+    """
+    Put `allocation` of the cash into the asset on day 1 and hold.
+    The remainder sits idle. allocation=1.0 is plain buy-and-hold.
+    """
+    data = data_handler.data
+    first_open = data.iloc[0]["open"]
+
+    to_invest = initial_cash * allocation
+    shares = int(to_invest / first_open)
+    idle_cash = initial_cash - (shares * first_open)
+
+    equity_curve = []
+    for i in range(len(data)):
+        row = data.iloc[i]
+        equity = (shares * row["close"]) + idle_cash
+        equity_curve.append({"date": row["date"], "equity": equity})
+
+    return equity_curve
+
 
 def buy_and_hold(data_handler, initial_cash=100_000):
-    """
-    What would initial_cash have become if we'd just bought
-    at the very first bar's open and held to the last bar's close?
-    """
-    data = data_handler.data   # the full dataframe
+    return static_allocation(data_handler, initial_cash, allocation=1.0)
 
-    first_open = data.iloc[0]["open"]
-    last_close = data.iloc[-1]["close"]
-
-    shares = int(initial_cash / first_open)      # how many can we afford at first_open?
-    leftover_cash = initial_cash - (shares * first_open) # whatever's left after buying
-
-    return (shares * last_close) + leftover_cash       # value of those shares at last_close, plus leftover
 def run_backtest(ticker, start, end, initial_cash=100_000):
     dh = DataHandler(ticker, start, end)
     pf = Portfolio(initial_cash=initial_cash)
@@ -39,24 +51,56 @@ def run_backtest(ticker, start, end, initial_cash=100_000):
         bar = dh.get_current_bar()
         pf.record_equity(bar["date"], bar["close"])
 
-    return pf
+    return pf, dh
 
 
 if __name__ == "__main__":
     ticker, start, end = "AAPL", "2020-01-01", "2023-01-01"
-    pf = run_backtest(ticker, start, end)
+    pf, dh = run_backtest(ticker, start, end)
 
     final_equity = pf.equity_curve[-1]["equity"]
-    
-    # Benchmark: what if we'd just bought and held?
-    dh = DataHandler(ticker, start, end)
-    bh_final = buy_and_hold(dh, initial_cash=pf.initial_cash)
+    bh_curve = buy_and_hold(dh, initial_cash=pf.initial_cash)
+    bh_final = bh_curve[-1]["equity"]
 
     print(f"Starting cash:     ${pf.initial_cash:,.2f}")
+
     print(f"--- Strategy ---")
     print(f"Final equity:      ${final_equity:,.2f}")
     print(f"Total return:      {(final_equity / pf.initial_cash - 1) * 100:.2f}%")
+    print(f"Sharpe ratio:      {sharpe_ratio(pf.equity_curve):.2f}")
+    print(f"Max drawdown:      {max_drawdown(pf.equity_curve) * 100:.2f}%")
     print(f"Trades made:       {len(pf.trade_log)}")
+
     print(f"--- Buy & Hold ---")
     print(f"Final equity:      ${bh_final:,.2f}")
     print(f"Total return:      {(bh_final / pf.initial_cash - 1) * 100:.2f}%")
+    print(f"Sharpe ratio:      {sharpe_ratio(bh_curve):.2f}")
+    print(f"Max drawdown:      {max_drawdown(bh_curve) * 100:.2f}%")
+
+    static_curve = static_allocation(dh, initial_cash=pf.initial_cash, allocation=0.75)
+    static_60_curve = static_allocation(dh, initial_cash=pf.initial_cash, allocation=0.60)
+    static_final = static_curve[-1]["equity"]
+
+    print(f"--- Static 75/25 ---")
+    print(f"Final equity:      ${static_final:,.2f}")
+    print(f"Total return:      {(static_final / pf.initial_cash - 1) * 100:.2f}%")
+    print(f"Sharpe ratio:      {sharpe_ratio(static_curve):.2f}")
+    print(f"Max drawdown:      {max_drawdown(static_curve) * 100:.2f}%")
+    print(f"--- Allocation sweep ---")
+    for alloc in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
+        curve = static_allocation(dh, initial_cash=pf.initial_cash, allocation=alloc)
+        final = curve[-1]["equity"]
+        ret = (final / pf.initial_cash - 1) * 100
+        dd = max_drawdown(curve) * 100
+        sh = sharpe_ratio(curve)
+        print(f"  {alloc:.0%}:  return {ret:6.2f}%   Sharpe {sh:.2f}   maxDD {dd:7.2f}%")
+
+    plot_equity_curves(
+        {
+            "MA crossover": pf.equity_curve,
+            "Buy & hold":   bh_curve,
+            "Static 60/40": static_60_curve,
+        },
+        title=f"{ticker} {start[:4]}–{end[:4]} — ${pf.initial_cash:,.0f} starting capital",
+        outfile="equity_curve_2020_2023.png",
+    )
